@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Vessel Tracker</title>
+
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js"></script>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css" />
+
+    <style>
+        body { 
+            font-family: Arial, sans-serif; 
+            text-align: center; 
+        }
+
+        .map-container {
+            display: flex;
+            flex-direction: row   
+        }
+
+        #side-panel {
+            margin-left: 2rem;
+            width: 15vw;
+            border: 1px solid black;
+        }
+
+        #active-tugboats{
+            display: flex;
+            align-items: flex-start;
+            margin-bottom: 2rem;
+        }
+        #map { height: 80vh; width: 80%; margin: auto; }
+        #slider-container { margin: 10px; }
+    </style>
+</head>
+<body>
+
+    <h1>Vessel Tracker</h1>
+
+    <div class="map-container">  
+        <div id="side-panel">
+            <h3>Active Tugboats</h3>
+            <div id="active-tugboats">
+            </div>
+
+            <button id="findTugboats">Find Active Tugboats</button>
+        </div>
+
+        <div id="map"></div>
+    </div>
+
+    <div id="slider-container">
+        <input type="range" id="timeSlider" min="0" max="0" value="0" style="width: 80%;">
+        <p>Time: <span id="timeLabel">Loading...</span></p>
+    </div>
+
+    <script>
+        $(document).ready(function () {
+            var map = L.map('map').setView([29.4163, -93.70755], 9.2);
+
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                attribution: '&copy; OpenStreetMap contributors'
+            }).addTo(map);
+
+            var vesselMarkers = {};
+            var timestamps = [];
+            var slider = document.getElementById("timeSlider");
+            var button = document.getElementById("findTugboats");
+            var timeLabel = document.getElementById("timeLabel");
+
+            var shipIcon = L.icon({ 
+                iconUrl: '/static/img/ship.png', 
+                iconSize: [60, 60] 
+            });
+            var tugIcon = L.icon({ 
+                iconUrl: '/static/img/tugboat.png', 
+                iconSize: [20, 20],
+                iconColor: "red"
+            });
+            var cargoIcon = L.icon({ 
+                iconUrl: '/static/img/cargo.png', 
+                iconSize: [30, 30] 
+            });
+
+            // Fetch timestamps
+            $.getJSON('/timestamps', function (data) {
+                timestamps = data;
+                slider.max = timestamps.length - 1;
+                updateMap(0);
+            });
+
+            function updateMap(index) {
+                var currentTime = timestamps[index];
+                timeLabel.innerText = currentTime;
+
+                // Fetch vessel positions for the selected time
+                $.getJSON('/ship_data', { time: currentTime }, function (vessels) {
+                    vessels.forEach(ship => {
+                        var id = ship.vessel.imo || ship.device.mmsi;
+                        var location = ship.navigation.location;
+                        var icon = (ship.vessel.type === "tug") ? tugIcon : shipIcon;
+
+                        if (!vesselMarkers[id]) {
+                            vesselMarkers[id] = L.marker([location.lat, location.long], { icon: icon })
+                                .bindPopup(`
+                                    <b>${ship.vessel.name}</b>
+                                    <br>
+                                    Speed: ${ship.navigation.speed} knots
+                                    <br>
+                                    Location: ${ship.navigation.location.lat}°N, ${ship.navigation.location.long}°E
+                                    <br>
+                                    Status: ${ship.navigation.status}
+                                    <br>
+                                    Time: ${ship.navigation.time}
+                                `)
+                                .addTo(map);
+                        } else {
+                            vesselMarkers[id].setLatLng([location.lat, location.long]);
+                            vesselMarkers[id].setPopupContent(`
+                                    <b>${ship.vessel.name}</b>
+                                    <br>
+                                    Speed: ${ship.navigation.speed} knots
+                                    <br>
+                                    Location: ${ship.navigation.location.lat}°N, ${ship.navigation.location.long}°E
+                                    <br>
+                                    Status: ${ship.navigation.status}
+                                    <br>
+                                    Time: ${ship.navigation.time}
+                            `);
+                        }
+                    });
+                });
+
+                //updateActiveTugboats(currentTime)
+            }
+
+            function updateActiveTugboats(index) {
+                var currentTime = timestamps[index];
+                // Clear the previous list of active tugboats
+                $('#active-tugboats').empty();
+
+                // Fetch active tugboats at the given time
+                $.getJSON('/active_tugboats', { time: currentTime }, function (vessels) {
+                    Object.keys(vessels).forEach(vessel => {
+                        var activeTug = `
+                        <div>
+                            <b>${vessels[vessel].state.vessel.name}</b>
+                            <br>Attached tug(s):`;
+
+                            vessels[vessel].tugs.forEach(tug => {
+                            activeTug += `<br>- ${tug.tug.vessel.name} at ${Number((tug.dist * 1000).toFixed(0))}m`;
+                        });
+
+                        activeTug += '</div>';
+                        $('#active-tugboats').append(activeTug);
+                    });
+                });
+            }
+
+            slider.onchange = function () {
+                updateMap(parseInt(slider.value));
+            };
+            button.onclick = function (){
+                updateActiveTugboats(parseInt(slider.value))
+            }
+        });
+    </script>
+
+</body>
+</html>
